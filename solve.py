@@ -129,6 +129,167 @@ GROQ_SECONDARY_MODEL = "qwen/qwen3.8-27b"
 LOGIN_URL = "https://vitvellore312.examly.io/login"
 LABS_URL = "https://vitvellore312.examly.io/mycourses/details?id=e0d46aa1-e455-412f-b9b4-0a8c84889cc2&type=mylabs"
 
+# =============================================================================
+# ACCESS CONTROL & USER AUTHORIZATION (EMAIL WHITELIST)
+# =============================================================================
+# Whitelist of authorized email addresses permitted to run this engine.
+# Only accounts matching this list (case-insensitive) can use the solver.
+# You can add authorized student emails or Gmail IDs here:
+ALLOWED_EMAILS = [
+    "ayush.agarwal2026a@vitstudent.ac.in",
+    # Add other authorized emails here, e.g.:
+    # "friend@gmail.com",
+    # "vartika@vitstudent.ac.in",
+]
+
+# Support adding emails via .env (comma-separated: ALLOWED_EMAILS=a@b.com,c@d.com)
+_env_allowed = os.getenv("ALLOWED_EMAILS", "")
+if _env_allowed:
+    for _em in _env_allowed.split(","):
+        _em_clean = _em.strip().lower()
+        if _em_clean and _em_clean not in [x.lower() for x in ALLOWED_EMAILS]:
+            ALLOWED_EMAILS.append(_em_clean)
+
+def get_current_user_email(driver) -> str:
+    """
+    Extracts user email from Examly session:
+    1. localStorage 'token' JSON (.email)
+    2. localStorage 'formData' JSON (.email)
+    3. localStorage 'studentData' JSON (.email)
+    4. DOM login email input fields (value)
+    """
+    script = """
+    try {
+        const token = JSON.parse(localStorage.getItem('token') || '{}');
+        if (token && token.email && typeof token.email === 'string') return token.email.toLowerCase().trim();
+    } catch(e) {}
+    try {
+        const formData = JSON.parse(localStorage.getItem('formData') || '{}');
+        if (formData && formData.email && typeof formData.email === 'string') return formData.email.toLowerCase().trim();
+    } catch(e) {}
+    try {
+        const student = JSON.parse(localStorage.getItem('studentData') || '{}');
+        if (student && student.email && typeof student.email === 'string') return student.email.toLowerCase().trim();
+    } catch(e) {}
+    try {
+        const emailInput = document.querySelector('input[type="email"], input[name="email"], input[id*="email"]');
+        if (emailInput && emailInput.value && emailInput.value.includes('@')) {
+            return emailInput.value.toLowerCase().trim();
+        }
+    } catch(e) {}
+    return '';
+    """
+    try:
+        email = driver.execute_script(script)
+        if email and isinstance(email, str) and "@" in email:
+            return email.strip().lower()
+    except Exception:
+        pass
+    return ""
+
+def verify_user_authorization(driver, stage_name: str = "", force_check: bool = False) -> bool:
+    """
+    Verifies that the logged-in or entered email is permitted in ALLOWED_EMAILS.
+    If unauthorized email is found, prints ACCESS DENIED banner and immediately exits.
+    Returns True if user is verified and authorized.
+    """
+    normalized_allowed = [e.strip().lower() for e in ALLOWED_EMAILS if e.strip()]
+    if not normalized_allowed:
+        return True
+
+    email = get_current_user_email(driver)
+    if email:
+        if email not in normalized_allowed:
+            print("\n" + "=" * 70)
+            print("  [ACCESS DENIED] UNAUTHORIZED ACCOUNT DETECTED!")
+            print("=" * 70)
+            print(f"  Detected Account : {email}")
+            print(f"  Current Stage    : {stage_name or 'Authorization Gate'}")
+            print("  Access Status    : BLOCKED — NOT ON AUTHORIZED WHITELIST")
+            print("")
+            print("  This automation tool is strictly restricted to licensed accounts.")
+            print("  Execution has been halted to prevent unauthorized usage.")
+            print("  Please contact the administrator to request access.")
+            print("=" * 70 + "\n")
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            sys.exit(1)
+        else:
+            if stage_name:
+                print(f"[AUTH OK] Verified authorized account ({email}) at {stage_name}.")
+            else:
+                print(f"[AUTH OK] Verified authorized account: {email}")
+            return True
+    elif force_check:
+        print("\n" + "=" * 70)
+        print("  [ACCESS ERROR] No Authenticated Account Found!")
+        print("=" * 70)
+        print("  Could not detect an active Examly login session or entered email.")
+        print("  Please log into Examly with an authorized account first.")
+        print("=" * 70 + "\n")
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        sys.exit(1)
+
+    return False
+
+def handle_guided_login(driver):
+    """
+    Guides the user through login on Examly.
+    Actively checks for entered email and denies access immediately if unauthorized.
+    Proceeds automatically once login completes with an authorized account.
+    """
+    print("\n======================================================================")
+    print("  VIT Examly Guided Login & Account Verification")
+    print("======================================================================")
+    print(f"[*] Opening Login Page: {LOGIN_URL}")
+    print("[*] Enter your authorized email and credentials in Chrome.")
+    print("[*] System is monitoring account authorization in real-time...")
+    print("\n>>> Once logged in, press [ENTER] in this terminal (or wait for auto-detection) <<<")
+    print("======================================================================")
+
+    driver.get(LOGIN_URL)
+    time.sleep(2)
+
+    last_detected = ""
+    while True:
+        # 1. Non-blocking key check on Windows
+        if HAS_MSVCRT and msvcrt.kbhit():
+            ch = msvcrt.getwch()
+            if ch in ('\r', '\n'):
+                # User pressed ENTER to signal login completion
+                email = get_current_user_email(driver)
+                if email:
+                    verify_user_authorization(driver, stage_name="Login Submission")
+                break
+
+        # 2. Check if an email is present in input or localStorage
+        email = get_current_user_email(driver)
+        if email and email != last_detected:
+            # Only test when email is full (matches email format) to avoid blocking during typing
+            if re.match(r"^[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}$", email):
+                last_detected = email
+                verify_user_authorization(driver, stage_name="Login Form Entry")
+
+        # 3. Check if user navigated away from login (login succeeded)
+        curr = driver.current_url.lower()
+        if "examly.io" in curr and "login" not in curr:
+            print("[OK] Login completed! Verifying account credentials...")
+            verify_user_authorization(driver, stage_name="Post-Login Verification", force_check=True)
+            break
+
+        # Fallback if not Windows MSVCRT
+        if not HAS_MSVCRT:
+            input("Press [ENTER] after entering credentials in Chrome... ")
+            verify_user_authorization(driver, stage_name="Manual Login Verification")
+            break
+
+        time.sleep(0.5)
+
 # Button candidate label lists (from Examly interface)
 RUN_BUTTON_LABELS = ["Compile & Run", "Compile and Run", "Compile&Run", "Run Code", "Compile", "Run"]
 SUBMIT_BUTTON_LABELS = ["Submit Code", "submit code"]
@@ -1950,6 +2111,8 @@ def process_coding_question(driver, question_num: int):
 # 9. MASTER QUESTION PROCESSOR (AUTO-ROUTER)
 # =============================================================================
 def process_question(driver, question_num: int):
+    # Guard: Ensure current session account is authorized
+    verify_user_authorization(driver, stage_name=f"Question #{question_num}")
     q_type = detect_question_type(driver)
     print(f"\n[*] Question Type Detected: [{q_type}]")
     if q_type == "MCQ":
@@ -1984,32 +2147,23 @@ def main():
             print("  Active Examly Session Detected!")
             print("======================================================================")
             print(f"[*] Chrome is already at:\n    {driver.current_url}")
+            # Verify authorization for existing session
+            verify_user_authorization(driver, stage_name="Active Session Verification")
             print("[*] You are logged in and ready.")
             print("\n>>> Navigate to your desired question in Chrome, then press [ENTER] here to start! <<<")
             print(">>> (Or type 'login' + ENTER if you want to re-open the Login page)                  <<<")
             print("======================================================================")
             ans = input().strip().lower()
             if ans in ("login", "relogin"):
-                driver.get(LOGIN_URL)
-                print(f"[*] Opened Login Page: {LOGIN_URL}")
-                print(">>> Once logged in, press [ENTER] to navigate to MyLabs... <<<")
-                input()
+                handle_guided_login(driver)
+                print(f"[*] Navigating to MyLabs URL: {LABS_URL}")
                 driver.get(LABS_URL)
                 print(f"[*] Opened MyLabs: {LABS_URL}")
                 print(">>> When you are on your question page, press [ENTER] to start solving! <<<")
                 input()
         else:
-            # Guided flow: Login -> ENTER -> Labs -> ENTER
-            print("\n======================================================================")
-            print("  VIT Examly Guided Login")
-            print("======================================================================")
-            print(f"[*] Opening Login Page: {LOGIN_URL}")
-            print("[*] If you are not already logged in, enter your password/credentials.")
-            print("\n>>> Once logged in, press [ENTER] in this terminal to navigate to MyLabs... <<<")
-            print("======================================================================")
-
-            driver.get(LOGIN_URL)
-            input()
+            # Guided flow with real-time email authorization gate
+            handle_guided_login(driver)
 
             print(f"\n[*] Navigating to MyLabs URL: {LABS_URL}")
             driver.get(LABS_URL)
@@ -2024,6 +2178,7 @@ def main():
             print("======================================================================")
 
             input()
+            verify_user_authorization(driver, stage_name="Pre-Solve Verification")
 
         # Automated continuous loop for solving questions
         while True:
