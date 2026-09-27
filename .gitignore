@@ -1,20 +1,87 @@
-# Byte-compiled / optimized / DLL files
+# =============================================================================
+# Python Bytecode, Caching & Environments
+# =============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Logs & temporary execution files
+# Virtual Environments
+venv/
+.venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# =============================================================================
+# Secrets, Environment Files & Keys
+# =============================================================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.pfx
+
+# =============================================================================
+# Execution Logs, Temporary Scripts & Runtime Caches
+# =============================================================================
+*.log
 execution.log
+chromedriver.log
 last_solution.py
 solutions_cache.json
 scratch/
+LESSONS_LEARNED.md
 
-# Build artifacts (if C++ was compiled)
-build/
+# Browser Profiles & Debugger Artifacts
+NeoColabProfile/
+ChromeDebugProfile/
+*.dmp
+Crashpad/
+
+# =============================================================================
+# C++ & CMake Build Artifacts
+# =============================================================================
 bin/
 *.exe
 *.o
+*.obj
+*.dll
+*.dylib
+*.a
+*.lib
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+Makefile
 
-# Environment variables & secrets
-.env
-*.key
+# =============================================================================
+# IDE, Editor & OS Artifacts
+# =============================================================================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+desktop.ini
