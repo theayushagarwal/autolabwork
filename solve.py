@@ -95,6 +95,34 @@ def _load_local_env():
 _load_local_env()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+
+def ensure_groq_api_key() -> str:
+    """Ensures GROQ_API_KEY is available. Prompts interactively and saves to .env if missing."""
+    global GROQ_API_KEY
+    if not GROQ_API_KEY or GROQ_API_KEY == "YOUR_GROQ_API_KEY_HERE":
+        print("\n" + "=" * 65)
+        print("  [!] GROQ_API_KEY was not found in environment or .env!")
+        print("=================================================================")
+        print("  Get a free key in 30 seconds at: https://console.groq.com/keys")
+        print("=================================================================")
+        try:
+            key_input = input("Paste your Groq API key here (starts with gsk_): ").strip().strip("'\"")
+        except Exception:
+            key_input = ""
+        if key_input:
+            GROQ_API_KEY = key_input
+            os.environ["GROQ_API_KEY"] = key_input
+            try:
+                env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+                with open(env_file, "w", encoding="utf-8") as f:
+                    f.write(f"GROQ_API_KEY={key_input}\n")
+                print(f"[OK] Automatically saved your key to {env_file} for future runs!\n")
+            except Exception:
+                pass
+        else:
+            raise RuntimeError("GROQ_API_KEY is required to solve questions!")
+    return GROQ_API_KEY
+
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_SECONDARY_MODEL = "qwen/qwen3.8-27b"
 
@@ -195,8 +223,7 @@ def strip_markdown_fences(text: str) -> str:
     return "\n".join(out).strip()
 
 def solve_with_groq(problem_text: str, constraints: dict = None, error_context: str = "") -> str:
-    if not GROQ_API_KEY or GROQ_API_KEY == "YOUR_GROQ_API_KEY_HERE":
-        raise RuntimeError("GROQ_API_KEY is not set!")
+    ensure_groq_api_key()
 
     constraints = constraints or {}
     wl_items = constraints.get("whitelist", [])
@@ -1498,8 +1525,7 @@ def execute_mcq_code_snippet(code: str, options: list) -> tuple:
 
 def query_groq_mcq(model: str, question_text: str, options: list) -> tuple:
     """Queries a single Groq model for an MCQ solution. Returns (chosen_index: int, reasoning: str)."""
-    if not GROQ_API_KEY or GROQ_API_KEY == "YOUR_GROQ_API_KEY_HERE":
-        raise RuntimeError("GROQ_API_KEY is not set!")
+    ensure_groq_api_key()
 
     formatted_options = []
     for opt in options:
