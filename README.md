@@ -63,7 +63,17 @@ Built to handle both **Complex Coding Challenges** (with iterative self-healing)
 
 ## 🚀 Quick Start Guide
 
-### Step 1: Set Your API Key
+### ⚡ The Easiest Way (1-Click on Windows)
+Just double-click **`solve.bat`**!
+* It automatically checks for Python and installs missing dependencies (`selenium`, `requests`).
+* If it's your first run, it asks for your free Groq key once and saves it to `.env`.
+* It launches Chrome in port 9222 stealth mode and connects automatically.
+
+---
+
+### Manual Setup (All Platforms)
+
+#### Step 1: Set Your API Key
 Get a free API key from [console.groq.com/keys](https://console.groq.com/keys):
 
 On Windows (Command Prompt):
@@ -79,7 +89,7 @@ On Linux / macOS:
 export GROQ_API_KEY="your_groq_api_key_here"
 ```
 
-### Step 2: Start Chrome with Remote Debugging
+#### Step 2: Start Chrome with Remote Debugging
 Close all existing Chrome windows, then launch Chrome with debugging enabled:
 
 On Windows:
@@ -88,7 +98,7 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\ChromeDebugProfile"
 ```
 *(Or simply let `solve.py` launch Chrome for you on first run!)*
 
-### Step 3: Run the Engine
+#### Step 3: Run the Engine
 Navigate to your test in Chrome, then run:
 
 ```bash
