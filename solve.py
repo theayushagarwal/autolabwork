@@ -150,14 +150,51 @@ if _env_allowed:
         if _em_clean and _em_clean not in [x.lower() for x in ALLOWED_EMAILS]:
             ALLOWED_EMAILS.append(_em_clean)
 
+# Live Cloud Whitelist URL (Only Ayush can edit this Gist)
+WHITELIST_GIST_URL = "https://gist.githubusercontent.com/theayushagarwal/d763823ecc77a48f284331f40a7a7664/raw/allowed_emails.json"
+
+def fetch_allowed_emails() -> list:
+    """
+    Fetches the live list of authorized emails from Ayush's cloud Gist.
+    Falls back to local ALLOWED_EMAILS if offline or during a network glitch.
+    """
+    emails = [e.strip().lower() for e in ALLOWED_EMAILS if e.strip()]
+    if WHITELIST_GIST_URL:
+        try:
+            # Query param cache-buster ensures real-time updates when Ayush edits the Gist
+            url = f"{WHITELIST_GIST_URL}?nocache={int(time.time())}"
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                remote_data = json.loads(resp.read().decode("utf-8"))
+                if isinstance(remote_data, list):
+                    for item in remote_data:
+                        if isinstance(item, str) and item.strip():
+                            clean_e = item.strip().lower()
+                            if clean_e not in emails:
+                                emails.append(clean_e)
+        except Exception:
+            pass  # Seamless fallback to local list
+    return emails
+
 def get_current_user_email(driver) -> str:
     """
     Extracts user email from Examly session:
-    1. localStorage 'token' JSON (.email)
-    2. localStorage 'formData' JSON (.email)
-    3. localStorage 'studentData' JSON (.email)
-    4. DOM login email input fields (value)
+    1. Checks current tab, or finds open Examly tab if user is on another tab
+    2. Checks localStorage 'token', 'formData', 'studentData' (.email)
+    3. Checks DOM login email input fields
     """
+    try:
+        if "examly.io" not in driver.current_url.lower():
+            for handle in driver.window_handles:
+                driver.switch_to.window(handle)
+                if "examly.io" in driver.current_url.lower():
+                    break
+    except Exception:
+        pass
+
     script = """
     try {
         const token = JSON.parse(localStorage.getItem('token') || '{}');
@@ -189,11 +226,12 @@ def get_current_user_email(driver) -> str:
 
 def verify_user_authorization(driver, stage_name: str = "", force_check: bool = False) -> bool:
     """
-    Verifies that the logged-in or entered email is permitted in ALLOWED_EMAILS.
+    Verifies that the logged-in or entered email is permitted via Cloud Whitelist.
     If unauthorized email is found, prints ACCESS DENIED banner and immediately exits.
     Returns True if user is verified and authorized.
     """
-    normalized_allowed = [e.strip().lower() for e in ALLOWED_EMAILS if e.strip()]
+    authorized_list = fetch_allowed_emails()
+    normalized_allowed = [e.strip().lower() for e in authorized_list if e.strip()]
     if not normalized_allowed:
         return True
 
@@ -209,7 +247,7 @@ def verify_user_authorization(driver, stage_name: str = "", force_check: bool = 
             print("")
             print("  This automation tool is strictly restricted to licensed accounts.")
             print("  Execution has been halted to prevent unauthorized usage.")
-            print("  Please contact the administrator to request access.")
+            print("  Please contact the administrator (Ayush) to request access.")
             print("=" * 70 + "\n")
             try:
                 driver.quit()
