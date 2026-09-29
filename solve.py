@@ -156,7 +156,8 @@ WHITELIST_GIST_URL = "https://gist.githubusercontent.com/theayushagarwal/d763823
 def fetch_allowed_emails() -> list:
     """
     Fetches the live list of authorized emails from Ayush's cloud Gist.
-    Falls back to local ALLOWED_EMAILS if offline or during a network glitch.
+    Falls back to regex extraction if JSON has syntax errors (e.g. missing comma),
+    and falls back to local ALLOWED_EMAILS if offline.
     """
     emails = [e.strip().lower() for e in ALLOWED_EMAILS if e.strip()]
     if WHITELIST_GIST_URL:
@@ -168,13 +169,21 @@ def fetch_allowed_emails() -> list:
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
             )
             with urllib.request.urlopen(req, timeout=3) as resp:
-                remote_data = json.loads(resp.read().decode("utf-8"))
-                if isinstance(remote_data, list):
-                    for item in remote_data:
-                        if isinstance(item, str) and item.strip():
-                            clean_e = item.strip().lower()
-                            if clean_e not in emails:
-                                emails.append(clean_e)
+                raw_text = resp.read().decode("utf-8")
+                try:
+                    remote_data = json.loads(raw_text)
+                    if isinstance(remote_data, list):
+                        for item in remote_data:
+                            if isinstance(item, str) and item.strip():
+                                clean_e = item.strip().lower()
+                                if clean_e not in emails:
+                                    emails.append(clean_e)
+                except Exception:
+                    # Robust fallback: extract any emails using regex even if comma was missed
+                    for item in re.findall(r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}", raw_text):
+                        clean_e = item.strip().lower()
+                        if clean_e not in emails:
+                            emails.append(clean_e)
         except Exception:
             pass  # Seamless fallback to local list
     return emails
