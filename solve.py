@@ -430,6 +430,35 @@ def strip_markdown_fences(text: str) -> str:
         out.append(line)
     return "\n".join(out).strip()
 
+def strip_all_comments(code: str) -> str:
+    """
+    Removes comments (# ...) from Python code to prevent Examly's
+    'Dont include Whitelist syntaxes in comment line!' static analyzer error.
+    Preserves '#' characters inside quoted string literals.
+    """
+    out_lines = []
+    for line in code.splitlines():
+        trimmed = line.strip()
+        if trimmed.startswith("#"):
+            continue
+        if "#" in line:
+            in_single = False
+            in_double = False
+            cut_idx = -1
+            for idx, ch in enumerate(line):
+                if ch == "'" and not in_double:
+                    in_single = not in_single
+                elif ch == '"' and not in_single:
+                    in_double = not in_double
+                elif ch == '#' and not in_single and not in_double:
+                    cut_idx = idx
+                    break
+            if cut_idx != -1:
+                line = line[:cut_idx].rstrip()
+        if line.strip():
+            out_lines.append(line)
+    return "\n".join(out_lines).strip()
+
 def solve_with_groq(problem_text: str, constraints: dict = None, error_context: str = "") -> str:
     ensure_groq_api_key()
 
@@ -452,7 +481,7 @@ def solve_with_groq(problem_text: str, constraints: dict = None, error_context: 
         "The code must look natural, clear, and human-written by a beginner/intermediate programmer.\n"
         "3. Output ONLY the raw executable Python code ready to run and pass tests.\n"
         "4. WHITELIST / MANDATORY SYNTAX RULE (CRITICAL):\n"
-        "   - If any Whitelist functions or syntaxes are specified (e.g. 'pow', 'math.sqrt', 'round'), "
+        "   - If any Whitelist functions or syntaxes are specified (e.g. 'pow', 'math.sqrt', 'round', 'len'), "
         "YOU MUST EXPLICITLY USE THEM in your solution! (e.g. use pow(base, exp) instead of **).\n"
         "   - Never violate Blacklist restrictions.\n"
         "5. PATTERN PRINTING & EXACT SPACING RULES (CRITICAL FOR EXAMLY):\n"
@@ -463,6 +492,10 @@ def solve_with_groq(problem_text: str, constraints: dict = None, error_context: 
         "Do NOT use rstrip() or strip() if the sample output contains trailing spaces. Match the exact sample spacing.\n"
         "   - For double/mirrored pyramids of height N: Row i (1 to N) typically has:\n"
         "     ' ' * (N - i) + ('* ' * i) + (' ' * (2 * (N - i))) + ('* ' * i)\n"
+        "6. NO COMMENTS RULE (CRITICAL FOR EXAMLY):\n"
+        "   - Do NOT write ANY comments (no lines starting with #).\n"
+        "   - Examly has a strict code validator that errors if Whitelist words appear in comments ('Dont include Whitelist syntaxes in comment line!'). "
+        "Write pure code with ZERO comments.\n"
         "STRICT RULE: Do NOT include any explanations, comments, or markdown code fences (like ```python or ```). "
         "Output raw Python code only."
     )
@@ -515,24 +548,36 @@ def solve_with_groq(problem_text: str, constraints: dict = None, error_context: 
         "temperature": 0.1
     }
 
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json",
-            "User-Agent": "AutoCode/1.0"
-        },
-        data=json.dumps(payload).encode("utf-8")
-    )
+    max_retries = 5
+    for attempt in range(1, max_retries + 1):
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "AutoCode/1.0"
+                },
+                data=json.dumps(payload).encode("utf-8")
+            )
 
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
 
-    if "choices" not in data or not data["choices"]:
-        raise RuntimeError(f"Groq returned no choices. Raw response: {data}")
+            if "choices" not in data or not data["choices"]:
+                raise RuntimeError(f"Groq returned no choices. Raw response: {data}")
 
-    code = data["choices"][0]["message"]["content"]
-    return strip_markdown_fences(code)
+            code = data["choices"][0]["message"]["content"]
+            code = strip_markdown_fences(code)
+            code = strip_all_comments(code)
+            return code
+        except Exception as e:
+            if attempt < max_retries:
+                wait_sec = attempt * 3
+                print(f"[!] Groq API / Network glitch ({e}). Retrying in {wait_sec}s (attempt {attempt}/{max_retries})...")
+                time.sleep(wait_sec)
+            else:
+                raise e
 
 # =============================================================================
 # 3. INDUSTRIAL-STRENGTH CHROME LAUNCHER (Persistent Profile, Locks, CDP Stealth)
