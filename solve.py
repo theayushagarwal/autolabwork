@@ -455,6 +455,14 @@ def solve_with_groq(problem_text: str, constraints: dict = None, error_context: 
         "   - If any Whitelist functions or syntaxes are specified (e.g. 'pow', 'math.sqrt', 'round'), "
         "YOU MUST EXPLICITLY USE THEM in your solution! (e.g. use pow(base, exp) instead of **).\n"
         "   - Never violate Blacklist restrictions.\n"
+        "5. PATTERN PRINTING & EXACT SPACING RULES (CRITICAL FOR EXAMLY):\n"
+        "   - If the problem involves printing patterns (stars, pyramids, numbers, shapes, grids):\n"
+        "   - Examly strictly grades exact whitespace and characters character-by-character!\n"
+        "   - Check the Sample Output carefully: Is each star/symbol followed by a space ('* ')?\n"
+        "   - Check if lines end with a trailing space in the sample (e.g. '* ' naturally leaves a trailing space). "
+        "Do NOT use rstrip() or strip() if the sample output contains trailing spaces. Match the exact sample spacing.\n"
+        "   - For double/mirrored pyramids of height N: Row i (1 to N) typically has:\n"
+        "     ' ' * (N - i) + ('* ' * i) + (' ' * (2 * (N - i))) + ('* ' * i)\n"
         "STRICT RULE: Do NOT include any explanations, comments, or markdown code fences (like ```python or ```). "
         "Output raw Python code only."
     )
@@ -488,7 +496,9 @@ def solve_with_groq(problem_text: str, constraints: dict = None, error_context: 
             f"{error_context}\n\n"
             f"SELF-HEALING GUIDELINES:\n"
             f"1. If a Whitelist Syntax error occurred: YOU MUST USE THE REQUIRED FUNCTION (e.g., pow(), math.sqrt(), round()).\n"
-            f"2. If Wrong Answer / Mismatch: Compare Expected Output vs Actual Output carefully. Fix spacing, newline, precision (e.g. %.2f), or logic bugs.\n"
+            f"2. If Wrong Answer / Mismatch: Compare Expected Output vs Actual Output carefully.\n"
+            f"   - For pattern problems: Check leading spaces count, middle spacing formula, and trailing spaces ('* ' vs '*').\n"
+            f"   - Fix spacing, newline, precision (e.g. %.2f), or logic bugs.\n"
             f"3. If EOFError / Input Mismatch: Use sys.stdin.read().split() or handle all test inputs cleanly.\n"
             f"4. If SyntaxError / Traceback: Fix the syntax, indentation, or type error on the specified line.\n"
             f"Write a completely revised, working Python 3 solution that satisfies all constraints and passes every test."
@@ -1407,6 +1417,14 @@ def extract_detailed_error_diagnostic(driver, last_alert: str = "") -> str:
                 for (const line of lines) {
                     if (/^(input|expected|actual|output|status|result|compiler message)/i.test(line) || line.length < 100) {
                         report.push(line);
+                    }
+                }
+                // Capture raw un-trimmed pre/code elements to preserve exact whitespace & indentation
+                const preElements = Array.from(card.querySelectorAll('pre, code, textarea, [class*="output"]'));
+                for (const el of preElements) {
+                    const rawVal = el.innerText || el.textContent || '';
+                    if (rawVal.trim().length > 0 && rawVal.length < 1000) {
+                        report.push(`[EXACT FORMATTED BLOCK]:\\n>>>RAW>>>\\n${rawVal}\\n<<<RAW<<<`);
                     }
                 }
             }
