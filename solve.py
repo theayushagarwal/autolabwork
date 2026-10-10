@@ -970,43 +970,55 @@ def inject_code_into_editor(driver, code: str, selector: str = ".ace_editor") ->
             }
             const readOnly = editor ? !!editor.getReadOnly() : !!aceEl.querySelector('textarea[readonly], textarea[disabled]');
             const curVal = editor ? (editor.getValue() || '') : (aceEl.innerText || '');
+            const idLower = (aceEl.id || '').toLowerCase();
+            const parentCls = (aceEl.parentElement && aceEl.parentElement.className ? String(aceEl.parentElement.className) : '').toLowerCase();
 
-            let contextText = '';
-            let curr = aceEl;
-            for (let depth = 0; depth < 5 && curr; depth++) {
-                let prev = curr.previousElementSibling;
-                while (prev) {
-                    if ((prev.classList && prev.classList.contains('ace_editor')) ||
-                        (prev.querySelectorAll && prev.querySelectorAll('.ace_editor').length > 0)) {
+            // 1. Direct Examly ID & Container Class Match (100% deterministic)
+            let role = 'unknown';
+            if (idLower.includes('headereditor') || parentCls.includes('header-content')) {
+                role = 'header';
+            } else if (idLower.includes('answereditor') || parentCls.includes('answer-content')) {
+                role = 'program';
+            } else if (idLower.includes('footereditor') || parentCls.includes('footer-content')) {
+                role = 'footer';
+            } else {
+                // 2. Contextual DOM fallback
+                let contextText = '';
+                let curr = aceEl;
+                for (let depth = 0; depth < 5 && curr; depth++) {
+                    let prev = curr.previousElementSibling;
+                    while (prev) {
+                        if ((prev.classList && prev.classList.contains('ace_editor')) ||
+                            (prev.querySelectorAll && prev.querySelectorAll('.ace_editor').length > 0)) {
+                            break;
+                        }
+                        contextText = (prev.innerText || '') + ' ' + contextText;
+                        prev = prev.previousElementSibling;
+                    }
+                    const parent = curr.parentElement;
+                    if (!parent) break;
+                    if (parent.querySelectorAll('.ace_editor').length > 1) {
                         break;
                     }
-                    contextText = (prev.innerText || '') + ' ' + contextText;
-                    prev = prev.previousElementSibling;
+                    curr = parent;
                 }
-                const parent = curr.parentElement;
-                if (!parent) break;
-                if (parent.querySelectorAll('.ace_editor').length > 1) {
-                    break;
-                }
-                curr = parent;
-            }
-            const lowerCtx = contextText.toLowerCase();
+                const lowerCtx = contextText.toLowerCase();
 
-            let role = 'unknown';
-            if (lowerCtx.includes('header snippet')) {
-                role = 'header';
-            } else if (lowerCtx.includes('footer snippet')) {
-                role = 'footer';
-            } else if (lowerCtx.includes('program') || lowerCtx.includes('debug result') || curVal.includes('You are using')) {
-                role = 'program';
-            } else if (total === 1) {
-                role = 'program';
-            } else if (total === 3) {
-                if (idx === 0) role = 'header';
-                else if (idx === 1) role = 'program';
-                else if (idx === 2) role = 'footer';
-            } else if (!readOnly) {
-                role = 'program';
+                if (lowerCtx.includes('header snippet')) {
+                    role = 'header';
+                } else if (lowerCtx.includes('footer snippet')) {
+                    role = 'footer';
+                } else if (lowerCtx.includes('program') || lowerCtx.includes('debug result') || curVal.includes('You are using')) {
+                    role = 'program';
+                } else if (total === 1) {
+                    role = 'program';
+                } else if (total === 3) {
+                    if (idx === 0) role = 'header';
+                    else if (idx === 1) role = 'program';
+                    else if (idx === 2) role = 'footer';
+                } else if (!readOnly) {
+                    role = 'program';
+                }
             }
 
             return { aceEl, editor, readOnly, curVal, role, idx };
@@ -1016,6 +1028,18 @@ def inject_code_into_editor(driver, code: str, selector: str = ".ace_editor") ->
         const allAceEls = Array.from(document.querySelectorAll('.ace_editor'));
         if (allAceEls.length > 0) {
             const classified = allAceEls.map((el, i) => classifyAceEditor(el, i, allAceEls.length));
+
+            // Clean up Header editor if an older script version accidentally injected into it
+            const headerObj = classified.find(c => c.role === 'header');
+            if (headerObj && headerObj.editor && headerObj.readOnly) {
+                const hVal = (headerObj.editor.getValue() || '').trim();
+                if (hVal === val.trim()) {
+                    try {
+                        headerObj.editor.setValue('#', -1);
+                        headerObj.editor.clearSelection();
+                    } catch(e) {}
+                }
+            }
 
             // Select editable 'Program' editor
             let target = classified.find(c => c.role === 'program' && !c.readOnly) ||
@@ -1046,18 +1070,15 @@ def inject_code_into_editor(driver, code: str, selector: str = ".ace_editor") ->
                         editor.setValue('', -1);
                     }
 
-                    // 2. Set the new code cleanly
+                    // 2. Set the new code cleanly (setValue automatically emits valid Ace change delta)
                     editor.setValue(val, -1);
                     editor.clearSelection();
                     editor.focus();
 
-                    // Trigger Ace change event & reset undo history
+                    // Reset undo history cleanly
                     try {
-                        if (editor.session) {
-                            editor.session._emit('change');
-                            if (editor.session.getUndoManager()) {
-                                editor.session.getUndoManager().reset();
-                            }
+                        if (editor.session && editor.session.getUndoManager()) {
+                            editor.session.getUndoManager().reset();
                         }
                     } catch(e) {}
 
@@ -1125,19 +1146,25 @@ def inject_code_into_editor(driver, code: str, selector: str = ".ace_editor") ->
     except Exception as e:
         print(f"[!] Injection note: {e}")
 
-    # Fallback to finding element and sending keys (prefer tagged Program editor)
+    # Fallback to finding element and sending keys (prefer tagged Program editor or #tt-answer-00-ttAnswerEditor1)
     try:
         from selenium.webdriver.common.keys import Keys
-        try:
-            el = driver.find_element(By.CSS_SELECTOR, '[data-autocode-target="program"]')
-        except Exception:
-            el = driver.find_element(By.CSS_SELECTOR, selector)
+        el = None
+        for cand_sel in ['[data-autocode-target="program"]', '[id*="ttAnswerEditor"]', '.answer-content .ace_editor', selector]:
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, cand_sel)
+                if el:
+                    break
+            except Exception:
+                continue
+        if not el:
+            return False
         el.click()
         el.send_keys(Keys.CONTROL, "a")
         el.send_keys(Keys.BACKSPACE)
         el.clear()
         el.send_keys(code)
-        print(f"[OK] Existing text cleared & new code typed into editor ({selector}).")
+        print(f"[OK] Existing text cleared & new code typed into editor.")
         return True
     except Exception as e:
         print(f"[X] Fallback typing failed: {e}")
@@ -1161,43 +1188,53 @@ def extract_editor_snippets(driver) -> dict:
             }
             const readOnly = editor ? !!editor.getReadOnly() : !!aceEl.querySelector('textarea[readonly], textarea[disabled]');
             const curVal = editor ? (editor.getValue() || '') : (aceEl.innerText || '');
-
-            let contextText = '';
-            let curr = aceEl;
-            for (let depth = 0; depth < 5 && curr; depth++) {
-                let prev = curr.previousElementSibling;
-                while (prev) {
-                    if ((prev.classList && prev.classList.contains('ace_editor')) ||
-                        (prev.querySelectorAll && prev.querySelectorAll('.ace_editor').length > 0)) {
-                        break;
-                    }
-                    contextText = (prev.innerText || '') + ' ' + contextText;
-                    prev = prev.previousElementSibling;
-                }
-                const parent = curr.parentElement;
-                if (!parent) break;
-                if (parent.querySelectorAll('.ace_editor').length > 1) {
-                    break;
-                }
-                curr = parent;
-            }
-            const lowerCtx = contextText.toLowerCase();
+            const idLower = (aceEl.id || '').toLowerCase();
+            const parentCls = (aceEl.parentElement && aceEl.parentElement.className ? String(aceEl.parentElement.className) : '').toLowerCase();
 
             let role = 'unknown';
-            if (lowerCtx.includes('header snippet')) {
+            if (idLower.includes('headereditor') || parentCls.includes('header-content')) {
                 role = 'header';
-            } else if (lowerCtx.includes('footer snippet')) {
+            } else if (idLower.includes('answereditor') || parentCls.includes('answer-content')) {
+                role = 'program';
+            } else if (idLower.includes('footereditor') || parentCls.includes('footer-content')) {
                 role = 'footer';
-            } else if (lowerCtx.includes('program') || lowerCtx.includes('debug result') || curVal.includes('You are using')) {
-                role = 'program';
-            } else if (total === 1) {
-                role = 'program';
-            } else if (total === 3) {
-                if (idx === 0) role = 'header';
-                else if (idx === 1) role = 'program';
-                else if (idx === 2) role = 'footer';
-            } else if (!readOnly) {
-                role = 'program';
+            } else {
+                let contextText = '';
+                let curr = aceEl;
+                for (let depth = 0; depth < 5 && curr; depth++) {
+                    let prev = curr.previousElementSibling;
+                    while (prev) {
+                        if ((prev.classList && prev.classList.contains('ace_editor')) ||
+                            (prev.querySelectorAll && prev.querySelectorAll('.ace_editor').length > 0)) {
+                            break;
+                        }
+                        contextText = (prev.innerText || '') + ' ' + contextText;
+                        prev = prev.previousElementSibling;
+                    }
+                    const parent = curr.parentElement;
+                    if (!parent) break;
+                    if (parent.querySelectorAll('.ace_editor').length > 1) {
+                        break;
+                    }
+                    curr = parent;
+                }
+                const lowerCtx = contextText.toLowerCase();
+
+                if (lowerCtx.includes('header snippet')) {
+                    role = 'header';
+                } else if (lowerCtx.includes('footer snippet')) {
+                    role = 'footer';
+                } else if (lowerCtx.includes('program') || lowerCtx.includes('debug result') || curVal.includes('You are using')) {
+                    role = 'program';
+                } else if (total === 1) {
+                    role = 'program';
+                } else if (total === 3) {
+                    if (idx === 0) role = 'header';
+                    else if (idx === 1) role = 'program';
+                    else if (idx === 2) role = 'footer';
+                } else if (!readOnly) {
+                    role = 'program';
+                }
             }
 
             return { readOnly, val: curVal.trim(), role, idx };
