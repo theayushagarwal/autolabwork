@@ -496,6 +496,12 @@ def solve_with_groq(problem_text: str, constraints: dict = None, error_context: 
         "   - Do NOT write ANY comments (no lines starting with #).\n"
         "   - Examly has a strict code validator that errors if Whitelist words appear in comments ('Dont include Whitelist syntaxes in comment line!'). "
         "Write pure code with ZERO comments.\n"
+        "7. HEADER & FOOTER SNIPPET RULE (CRITICAL FOR EXAMLY):\n"
+        "   - Some questions include a locked 'Header Snippet' (runs before your code) and/or 'Footer Snippet' (runs after your code).\n"
+        "   - If a Footer Snippet is present and already reads input (e.g. `num = int(input())`) or prints the result (e.g. `print(digital_root(num))`), "
+        "YOUR CODE MUST ONLY DEFINE THE REQUIRED FUNCTION OR CLASS (e.g. `def digital_root(num): ...`).\n"
+        "   - NEVER duplicate `input()` or `print()` calls at the top level when the Footer Snippet already handles input/output!\n"
+        "   - Match the exact function name, class name, and parameter signature expected by the Header/Footer Snippets.\n"
         "STRICT RULE: Do NOT include any explanations, comments, or markdown code fences (like ```python or ```). "
         "Output raw Python code only."
     )
@@ -948,61 +954,132 @@ def click_button_by_text(driver, text_match: str) -> bool:
 def inject_code_into_editor(driver, code: str, selector: str = ".ace_editor") -> bool:
     """
     Direct Ace Editor injection with Angular change event propagation.
-    Ensures that Angular marks the form dirty/valid so compile & submit buttons activate.
+    Automatically detects multi-editor pages (Header Snippet / Program / Footer Snippet)
+    and strictly targets the editable 'Program' editor instead of locked snippet editors.
     """
     script = """
         const val = arguments[0];
         const sel = arguments[1] || '.ace_editor';
 
-        // 1. Ace Editor
-        const aceEl = document.querySelector(sel) || document.querySelector('.ace_editor');
-        if (aceEl) {
+        function classifyAceEditor(aceEl, idx, total) {
             let editor = null;
             if (aceEl.env && aceEl.env.editor) {
                 editor = aceEl.env.editor;
             } else if (window.ace && typeof window.ace.edit === 'function') {
                 try { editor = window.ace.edit(aceEl); } catch(e) {}
             }
+            const readOnly = editor ? !!editor.getReadOnly() : !!aceEl.querySelector('textarea[readonly], textarea[disabled]');
+            const curVal = editor ? (editor.getValue() || '') : (aceEl.innerText || '');
 
-            if (editor) {
-                const prior = (editor.getValue() || '').trim();
-                const priorLength = prior.length;
-
-                // 1. Explicitly clear any existing code/template/boilerplate
-                if (priorLength > 0) {
-                    editor.selectAll();
-                    if (editor.session) {
-                        editor.session.setValue('');
+            let contextText = '';
+            let curr = aceEl;
+            for (let depth = 0; depth < 5 && curr; depth++) {
+                let prev = curr.previousElementSibling;
+                while (prev) {
+                    if ((prev.classList && prev.classList.contains('ace_editor')) ||
+                        (prev.querySelectorAll && prev.querySelectorAll('.ace_editor').length > 0)) {
+                        break;
                     }
-                    editor.setValue('', -1);
+                    contextText = (prev.innerText || '') + ' ' + contextText;
+                    prev = prev.previousElementSibling;
                 }
+                const parent = curr.parentElement;
+                if (!parent) break;
+                if (parent.querySelectorAll('.ace_editor').length > 1) {
+                    break;
+                }
+                curr = parent;
+            }
+            const lowerCtx = contextText.toLowerCase();
 
-                // 2. Set the new code cleanly
-                editor.setValue(val, -1);
-                editor.clearSelection();
-                editor.focus();
+            let role = 'unknown';
+            if (lowerCtx.includes('header snippet')) {
+                role = 'header';
+            } else if (lowerCtx.includes('footer snippet')) {
+                role = 'footer';
+            } else if (lowerCtx.includes('program') || lowerCtx.includes('debug result') || curVal.includes('You are using')) {
+                role = 'program';
+            } else if (total === 1) {
+                role = 'program';
+            } else if (total === 3) {
+                if (idx === 0) role = 'header';
+                else if (idx === 1) role = 'program';
+                else if (idx === 2) role = 'footer';
+            } else if (!readOnly) {
+                role = 'program';
+            }
 
-                // Trigger Ace change event & reset undo history
+            return { aceEl, editor, readOnly, curVal, role, idx };
+        }
+
+        // 1. Ace Editor (Multi-Editor Aware: Header / Program / Footer)
+        const allAceEls = Array.from(document.querySelectorAll('.ace_editor'));
+        if (allAceEls.length > 0) {
+            const classified = allAceEls.map((el, i) => classifyAceEditor(el, i, allAceEls.length));
+
+            // Select editable 'Program' editor
+            let target = classified.find(c => c.role === 'program' && !c.readOnly) ||
+                         classified.find(c => !c.readOnly && c.role !== 'header' && c.role !== 'footer') ||
+                         classified.find(c => c.role === 'program') ||
+                         classified.find(c => !c.readOnly) ||
+                         (classified.length === 3 ? classified[1] : classified[0]);
+
+            if (target && target.aceEl) {
+                allAceEls.forEach(el => el.removeAttribute('data-autocode-target'));
+                target.aceEl.setAttribute('data-autocode-target', 'program');
                 try {
-                    if (editor.session) {
-                        editor.session._emit('change');
-                        if (editor.session.getUndoManager()) {
-                            editor.session.getUndoManager().reset();
-                        }
-                    }
+                    target.aceEl.scrollIntoView({ behavior: 'instant', block: 'center' });
                 } catch(e) {}
 
-                aceEl.dispatchEvent(new Event('input', { bubbles: true }));
-                aceEl.dispatchEvent(new Event('change', { bubbles: true }));
+                const editor = target.editor;
+                const aceEl = target.aceEl;
+                if (editor) {
+                    const prior = (editor.getValue() || '').trim();
+                    const priorLength = prior.length;
 
-                // Unfocus active element to trigger Angular form change detection
-                setTimeout(() => {
-                    if (document.activeElement && document.activeElement.blur) {
-                        document.activeElement.blur();
+                    // 1. Explicitly clear any existing code/template/boilerplate
+                    if (priorLength > 0) {
+                        editor.selectAll();
+                        if (editor.session) {
+                            editor.session.setValue('');
+                        }
+                        editor.setValue('', -1);
                     }
-                }, 50);
 
-                return { success: true, prior_length: priorLength, editor: "Ace" };
+                    // 2. Set the new code cleanly
+                    editor.setValue(val, -1);
+                    editor.clearSelection();
+                    editor.focus();
+
+                    // Trigger Ace change event & reset undo history
+                    try {
+                        if (editor.session) {
+                            editor.session._emit('change');
+                            if (editor.session.getUndoManager()) {
+                                editor.session.getUndoManager().reset();
+                            }
+                        }
+                    } catch(e) {}
+
+                    aceEl.dispatchEvent(new Event('input', { bubbles: true }));
+                    aceEl.dispatchEvent(new Event('change', { bubbles: true }));
+
+                    // Unfocus active element to trigger Angular form change detection
+                    setTimeout(() => {
+                        if (document.activeElement && document.activeElement.blur) {
+                            document.activeElement.blur();
+                        }
+                    }, 50);
+
+                    return {
+                        success: true,
+                        prior_length: priorLength,
+                        editor: "Ace",
+                        role: target.role,
+                        editor_index: target.idx,
+                        total_editors: allAceEls.length
+                    };
+                }
             }
         }
 
@@ -1031,12 +1108,16 @@ def inject_code_into_editor(driver, code: str, selector: str = ".ace_editor") ->
     try:
         result = driver.execute_script(script, code, selector)
         if result and isinstance(result, dict) and result.get("success"):
+            total_ed = result.get("total_editors", 1)
+            ed_idx = result.get("editor_index", 0)
+            if total_ed and total_ed > 1:
+                print(f"[OK] Multi-Editor layout detected ({total_ed} Ace editors). Targeted editable 'Program' editor (Editor #{ed_idx + 1}), skipping locked Header/Footer snippets!")
             prior_len = result.get("prior_length", 0)
             if prior_len > 0:
-                print(f"[OK] Detected {prior_len} characters of existing code/template in editor. Wiped completely clean!")
+                print(f"[OK] Detected {prior_len} characters of existing code/template in Program editor. Wiped completely clean!")
             else:
-                print("[OK] Editor was empty.")
-            print("[OK] Fresh code cleanly injected into editor (Ace Editor / Angular sync).")
+                print("[OK] Program editor was empty.")
+            print("[OK] Fresh code cleanly injected into Program editor (Ace Editor / Angular sync).")
             return True
         elif result is True:
             print("[OK] Code populated via smart editor injection.")
@@ -1044,10 +1125,13 @@ def inject_code_into_editor(driver, code: str, selector: str = ".ace_editor") ->
     except Exception as e:
         print(f"[!] Injection note: {e}")
 
-    # Fallback to finding element and sending keys
+    # Fallback to finding element and sending keys (prefer tagged Program editor)
     try:
         from selenium.webdriver.common.keys import Keys
-        el = driver.find_element(By.CSS_SELECTOR, selector)
+        try:
+            el = driver.find_element(By.CSS_SELECTOR, '[data-autocode-target="program"]')
+        except Exception:
+            el = driver.find_element(By.CSS_SELECTOR, selector)
         el.click()
         el.send_keys(Keys.CONTROL, "a")
         el.send_keys(Keys.BACKSPACE)
@@ -1059,14 +1143,185 @@ def inject_code_into_editor(driver, code: str, selector: str = ".ace_editor") ->
         print(f"[X] Fallback typing failed: {e}")
         return False
 
+def extract_editor_snippets(driver) -> dict:
+    """
+    Inspects all Ace Editor instances on the page and extracts:
+      - header: locked code in the 'Header Snippet' editor (if any)
+      - program: code currently in the 'Program' editor (if any)
+      - footer: locked code in the 'Footer Snippet' editor (if any)
+      - total_editors: total count of .ace_editor elements on the page
+    """
+    script = """
+        function classifyAceEditor(aceEl, idx, total) {
+            let editor = null;
+            if (aceEl.env && aceEl.env.editor) {
+                editor = aceEl.env.editor;
+            } else if (window.ace && typeof window.ace.edit === 'function') {
+                try { editor = window.ace.edit(aceEl); } catch(e) {}
+            }
+            const readOnly = editor ? !!editor.getReadOnly() : !!aceEl.querySelector('textarea[readonly], textarea[disabled]');
+            const curVal = editor ? (editor.getValue() || '') : (aceEl.innerText || '');
+
+            let contextText = '';
+            let curr = aceEl;
+            for (let depth = 0; depth < 5 && curr; depth++) {
+                let prev = curr.previousElementSibling;
+                while (prev) {
+                    if ((prev.classList && prev.classList.contains('ace_editor')) ||
+                        (prev.querySelectorAll && prev.querySelectorAll('.ace_editor').length > 0)) {
+                        break;
+                    }
+                    contextText = (prev.innerText || '') + ' ' + contextText;
+                    prev = prev.previousElementSibling;
+                }
+                const parent = curr.parentElement;
+                if (!parent) break;
+                if (parent.querySelectorAll('.ace_editor').length > 1) {
+                    break;
+                }
+                curr = parent;
+            }
+            const lowerCtx = contextText.toLowerCase();
+
+            let role = 'unknown';
+            if (lowerCtx.includes('header snippet')) {
+                role = 'header';
+            } else if (lowerCtx.includes('footer snippet')) {
+                role = 'footer';
+            } else if (lowerCtx.includes('program') || lowerCtx.includes('debug result') || curVal.includes('You are using')) {
+                role = 'program';
+            } else if (total === 1) {
+                role = 'program';
+            } else if (total === 3) {
+                if (idx === 0) role = 'header';
+                else if (idx === 1) role = 'program';
+                else if (idx === 2) role = 'footer';
+            } else if (!readOnly) {
+                role = 'program';
+            }
+
+            return { readOnly, val: curVal.trim(), role, idx };
+        }
+
+        const allAceEls = Array.from(document.querySelectorAll('.ace_editor'));
+        const out = { header: '', program: '', footer: '', total_editors: allAceEls.length };
+        if (allAceEls.length === 0) return out;
+
+        const classified = allAceEls.map((el, i) => classifyAceEditor(el, i, allAceEls.length));
+        for (const item of classified) {
+            if (item.role === 'header' && !out.header) out.header = item.val;
+            else if (item.role === 'program' && !out.program) out.program = item.val;
+            else if (item.role === 'footer' && !out.footer) out.footer = item.val;
+        }
+        return out;
+    """
+    try:
+        res = driver.execute_script(script)
+        if isinstance(res, dict):
+            return res
+    except Exception:
+        pass
+    return {"header": "", "program": "", "footer": "", "total_editors": 0}
+
+def sanitize_code_for_snippets(code: str, snippets: dict) -> str:
+    """
+    If a question has a locked Header Snippet or Footer Snippet that already handles
+    input() / print() or invokes the student's function/class, strips any redundant
+    top-level driver code (like duplicate input()/print() after def/class) from `code`.
+    """
+    if not code or not snippets:
+        return code
+
+    header_active = strip_all_comments(snippets.get("header", "")).strip()
+    footer_active = strip_all_comments(snippets.get("footer", "")).strip()
+    if not header_active and not footer_active:
+        return code
+
+    combined_snippets = f"{header_active}\n{footer_active}".strip()
+
+    try:
+        import ast
+        tree = ast.parse(code)
+        defined_names = [
+            node.name for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        ]
+        if not defined_names:
+            return code
+
+        # Find the last function or class definition at top-level
+        last_def_idx = -1
+        for idx, node in enumerate(tree.body):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                last_def_idx = idx
+
+        if last_def_idx == -1 or last_def_idx == len(tree.body) - 1:
+            return code
+
+        trailing_nodes = tree.body[last_def_idx + 1:]
+        lines = code.splitlines()
+        first_trailing_line = trailing_nodes[0].lineno - 1
+        trailing_source = "\n".join(lines[first_trailing_line:])
+
+        footer_calls_defined = any(
+            re.search(rf"\b{re.escape(fn)}\s*\(", footer_active) for fn in defined_names
+        )
+        snippets_have_io = ("input(" in combined_snippets) or ("print(" in combined_snippets)
+        trailing_has_driver = (
+            ("input(" in trailing_source) or
+            ("print(" in trailing_source) or
+            ("sys.stdin" in trailing_source) or
+            ("__name__" in trailing_source) or
+            (footer_calls_defined and any(re.search(rf"\b{re.escape(fn)}\s*\(", trailing_source) for fn in defined_names))
+        )
+
+        if (footer_calls_defined or snippets_have_io) and trailing_has_driver:
+            last_def_end_line = tree.body[last_def_idx].end_lineno
+            cleaned = "\n".join(lines[:last_def_end_line]).strip()
+            if cleaned:
+                print("[*] Snippet Guard: Stripped redundant top-level input()/print() driver code (already handled by Footer Snippet).")
+                return cleaned
+    except Exception:
+        pass
+
+    return code
+
 def extract_problem_text(driver) -> str:
     switch_to_latest_tab(driver)
+    base_text = ""
     if PROBLEM_TEXT_SELECTOR:
         script = f"var el = document.querySelector('{PROBLEM_TEXT_SELECTOR}'); return el ? el.innerText : '';"
         text = driver.execute_script(script)
         if text and len(text.strip()) > 0:
-            return text.strip()
-    return driver.execute_script("return document.body ? document.body.innerText : '';").strip()
+            base_text = text.strip()
+    if not base_text:
+        base_text = driver.execute_script("return document.body ? document.body.innerText : '';").strip()
+
+    # Append locked Header / Footer Snippet contents if present so AI & Cache see the exact signatures
+    snippets = extract_editor_snippets(driver)
+    header_active = strip_all_comments(snippets.get("header", "")).strip()
+    footer_active = strip_all_comments(snippets.get("footer", "")).strip()
+
+    if header_active or footer_active:
+        snippet_block = [
+            "\n\n=========================================================",
+            "[CRITICAL — LOCKED HEADER / FOOTER SNIPPETS IN EDITOR]",
+            "The platform automatically concatenates Header Snippet + Your Program + Footer Snippet."
+        ]
+        if header_active:
+            snippet_block.append(f"\nHeader Snippet (LOCKED - runs BEFORE your code - DO NOT REPEAT):\n{header_active}")
+        if footer_active:
+            snippet_block.append(f"\nFooter Snippet (LOCKED - runs AFTER your code - DO NOT REPEAT):\n{footer_active}")
+        snippet_block.append(
+            "\nMANDATORY INSTRUCTIONS FOR SNIPPETS:\n"
+            "1. Write ONLY the code that belongs in the middle 'Program' editor.\n"
+            "2. Define the exact function(s)/class(es)/variable(s) referenced by the Footer Snippet (with matching names and parameters).\n"
+            "3. DO NOT repeat any input() or print() calls that are already present in the Header Snippet or Footer Snippet!\n"
+            "========================================================="
+        )
+        base_text += "\n".join(snippet_block)
+
+    return base_text
 
 def get_current_question_info(driver) -> tuple:
     """Returns (current_question_num: int, total_questions: int) from page text."""
@@ -2077,6 +2332,14 @@ def process_coding_question(driver, question_num: int):
 
     print(f"[OK] Extracted {len(problem_text)} characters from problem page.")
 
+    snippets = extract_editor_snippets(driver)
+    header_active = strip_all_comments(snippets.get("header", "")).strip()
+    footer_active = strip_all_comments(snippets.get("footer", "")).strip()
+    if header_active:
+        print(f"[!] DETECTED LOCKED HEADER SNIPPET:\n{header_active}")
+    if footer_active:
+        print(f"[!] DETECTED LOCKED FOOTER SNIPPET:\n{footer_active}")
+
     # Universal Pre-Check: Scan for platform constraints (Whitelist, Blacklist, required functions)
     constraints = extract_page_constraints(driver)
     if constraints.get("whitelist"):
@@ -2095,12 +2358,14 @@ def process_coding_question(driver, question_num: int):
             print(f"[!] Cached solution missing mandatory whitelist {wl}. Regenerating...")
             code = ""
         else:
+            code = sanitize_code_for_snippets(code, snippets)
             print("\n[CACHE HIT] Loaded verified solution from local cache (0 API calls used)!")
 
     if not code:
         print("[*] Querying Groq (openai/gpt-oss-120b) for Python solution with constraint enforcement...")
         start = time.time()
         code = solve_with_groq(problem_text, constraints=constraints)
+        code = sanitize_code_for_snippets(code, snippets)
         elapsed_ms = int((time.time() - start) * 1000)
         print(f"[OK] Solution generated in {elapsed_ms} ms!")
         save_to_cache(problem_text, code)
@@ -2167,6 +2432,7 @@ def process_coding_question(driver, question_num: int):
                 constraints=constraints,
                 error_context=f"Failed Code:\n{code}\n\nDiagnostic Output:\n{error_details}"
             )
+            code = sanitize_code_for_snippets(code, snippets)
             print("\n----- Healed Code -----\n" + code + "\n------------------------\n")
             save_to_cache(problem_text, code)
 
