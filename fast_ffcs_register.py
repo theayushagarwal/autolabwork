@@ -278,8 +278,8 @@ class FFCSBot:
         ]
         target_chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
         if not target_chrome:
-            print("[-] Could not find Chrome. Please run vtop.bat manually.")
-            return False
+            import shutil
+            target_chrome = shutil.which("chrome") or "chrome.exe"
 
         profile_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\VTOPProfile")
         cmd = [
