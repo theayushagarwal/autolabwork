@@ -5,7 +5,7 @@ echo   Launching Chrome for VTOP Registration (Port 9222 Enabled)
 echo ======================================================================
 echo.
 echo Launching browser...
-start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome\VTOPProfile" --no-first-run --no-default-browser-check "https://vtopreg.vit.ac.in/bookmark/checkRegistration"
+start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome\VTOPProfile" --no-first-run --no-default-browser-check "https://vtopreg.vit.ac.in/indexplus/"
 echo.
 echo [OK] Chrome is now running!
 echo.

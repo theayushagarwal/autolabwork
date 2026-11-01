@@ -288,7 +288,7 @@ class FFCSBot:
             f"--user-data-dir={profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
-            "https://vtopreg.vit.ac.in/bookmark/checkRegistration"
+            "https://vtopreg.vit.ac.in/indexplus/"
         ]
         subprocess.Popen(cmd)
         print("[+] Chrome launched! Waiting 4 seconds for initialization...")
