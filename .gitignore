@@ -55,8 +55,14 @@ LESSONS_LEARNED.md
 # Browser Profiles & Debugger Artifacts
 NeoColabProfile/
 ChromeDebugProfile/
+VTOPProfile/
 *.dmp
 Crashpad/
+
+# Temporary Screenshots & Media Dumps
+*.png
+*.jpg
+*.jpeg
 
 # =============================================================================
 # C++ & CMake Build Artifacts
